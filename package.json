@@ -1,0 +1,10 @@
+{
+  "name": "chess-4",
+  "version": "1.0.0",
+  "description": "4-player chess board with websocket chat",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  }
+}
