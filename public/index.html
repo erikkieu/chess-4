@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>4 Player Chess + Chat</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <section class="board-wrap">
+        <div id="board" class="board" aria-label="Four player chess board"></div>
+      </section>
+
+      <aside class="chat-wrap">
+        <h1>4-Player Lobby Chat</h1>
+        <label>
+          Your name
+          <input id="nameInput" maxlength="24" placeholder="Enter your name" />
+        </label>
+
+        <label>
+          Send to
+          <select id="recipientSelect">
+            <option value="all">Everyone</option>
+          </select>
+        </label>
+
+        <div id="status" class="status">Connecting…</div>
+        <ul id="messages" class="messages"></ul>
+
+        <form id="chatForm" class="chat-form">
+          <input id="chatInput" maxlength="500" placeholder="Type a message" required />
+          <button type="submit">Send</button>
+        </form>
+      </aside>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

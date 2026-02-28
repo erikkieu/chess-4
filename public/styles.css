@@ -1,0 +1,120 @@
+:root {
+  --bg: #232323;
+  --light: #d0d1d5;
+  --dark: #b4b4b9;
+  --blue: #4aa1de;
+  --green: #65a977;
+  --gold: #cba13d;
+  --red: #c84b4b;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: Inter, system-ui, sans-serif;
+  background: radial-gradient(circle, #4a4a4a 0%, #1f1f1f 70%);
+  color: #ececec;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(700px, 1fr) 360px;
+  gap: 1rem;
+  min-height: 100vh;
+  padding: 1rem;
+}
+
+.board-wrap {
+  display: grid;
+  place-items: center;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(14, 52px);
+  grid-template-rows: repeat(14, 52px);
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.4);
+}
+
+.cell {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  font-size: 38px;
+}
+
+.cell.dark { background: var(--dark); }
+.cell.light { background: var(--light); }
+.cell.void { background: transparent; }
+
+.piece-blue { color: var(--blue); }
+.piece-green { color: var(--green); }
+.piece-gold { color: var(--gold); }
+.piece-red { color: var(--red); }
+
+.chat-wrap {
+  background: #1f242bcc;
+  border: 1px solid #ffffff20;
+  border-radius: 12px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  backdrop-filter: blur(2px);
+}
+
+.chat-wrap h1 { margin: 0 0 0.25rem; font-size: 1.25rem; }
+label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.85rem; }
+input, select, button {
+  border-radius: 8px;
+  border: 1px solid #ffffff28;
+  padding: 0.55rem 0.65rem;
+  font-size: 0.95rem;
+}
+
+button {
+  cursor: pointer;
+  background: #3362c5;
+  color: #fff;
+  border-color: #3362c5;
+}
+
+.status { font-size: 0.85rem; color: #cfd7ff; }
+
+.messages {
+  list-style: none;
+  margin: 0;
+  padding: 0.55rem;
+  border-radius: 8px;
+  border: 1px solid #ffffff20;
+  background: #11171d;
+  flex: 1;
+  overflow: auto;
+  min-height: 260px;
+}
+
+.messages li {
+  font-size: 0.86rem;
+  margin-bottom: 0.4rem;
+  line-height: 1.35;
+}
+
+.messages .meta { color: #a4b8d3; font-size: 0.75rem; }
+.messages .private { color: #ffc5ef; }
+.messages .system { color: #ffd3a8; }
+
+.chat-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.45rem;
+}
+
+@media (max-width: 1200px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
