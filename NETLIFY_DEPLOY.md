@@ -31,3 +31,19 @@ These values are also encoded in `netlify.toml`.
 1. Deploy this repo to Netlify (frontend only).
 2. Deploy `server.js` somewhere that supports persistent Node/WebSocket processes.
 3. Update the frontend WebSocket endpoint to point to that backend URL before production use.
+
+
+## Production URL for this project
+
+The frontend is deployed at:
+
+- `https://semlastudios.netlify.app/`
+
+Because this host is HTTPS, your game backend must expose a secure WebSocket endpoint (`wss://...`).
+
+Quick override options supported by `public/app.js`:
+
+1. Query string (temporary):
+   - `https://semlastudios.netlify.app/?ws=wss://<your-backend-host>`
+2. Global variable (persistent, in `index.html` before `app.js`):
+   - `window.CHESS_WS_URL = 'wss://<your-backend-host>'`

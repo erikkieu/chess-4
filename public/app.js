@@ -176,26 +176,39 @@ function applyGameState(payload) {
   updateGameStatus();
 }
 
-function connect() {
-  statusEl.textContent = 'Connecting…';
-  ws = new WebSocket(WS_URL);
+function resolveWebSocketUrl() {
+  const query = new URLSearchParams(location.search);
+  const queryUrl = query.get('ws');
+  const configuredUrl = window.CHESS_WS_URL;
 
-  ws.addEventListener('open', () => {
-    state.isConnected = true;
-    statusEl.textContent = 'Connected';
-    if (state.reconnectTimer) {
-      clearTimeout(state.reconnectTimer);
-      state.reconnectTimer = null;
-    }
+  if (queryUrl) return queryUrl;
+  if (configuredUrl) return configuredUrl;
 
-    const chosenName = nameInput.value.trim();
-    if (chosenName) {
-      sendJson({
-        type: 'set-name',
-        name: chosenName,
-      });
-    }
-  });
+  const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${wsProtocol}//${location.host}`;
+}
+
+const wsUrl = resolveWebSocketUrl();
+const ws = new WebSocket(wsUrl);
+
+ws.addEventListener('open', () => {
+  statusEl.textContent = `Connected (${wsUrl})`;
+});
+
+ws.addEventListener('close', () => {
+  statusEl.textContent = `Disconnected (${wsUrl})`;
+});
+
+
+ws.addEventListener('error', () => {
+  statusEl.textContent = `Connection error (${wsUrl})`;
+  if (location.hostname.endsWith('netlify.app') && !window.CHESS_WS_URL) {
+    pushMessage(
+      'This Netlify site serves the UI only. Add ?ws=wss://<your-backend-host> or set window.CHESS_WS_URL before app.js loads.',
+      'system'
+    );
+  }
+});
 
   ws.addEventListener('close', () => {
     state.isConnected = false;
