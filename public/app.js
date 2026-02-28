@@ -8,6 +8,7 @@ const chatInput = document.querySelector('#chatInput');
 const readyButton = document.querySelector('#readyButton');
 const gameStatusEl = document.querySelector('#gameStatus');
 const rosterEl = document.querySelector('#roster');
+const waitingRoomInfoEl = document.querySelector('#waitingRoomInfo');
 
 const pieces = {
   rook: '♜',
@@ -18,6 +19,9 @@ const pieces = {
   pawn: '♟',
 };
 
+const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`;
+const RECONNECT_DELAY_MS = 1500;
+
 const state = {
   users: [],
   board: {},
@@ -27,7 +31,11 @@ const state = {
   turn: null,
   yourColor: null,
   selectedCell: null,
+  isConnected: false,
+  reconnectTimer: null,
 };
+
+let ws = null;
 
 function inBoard(row, col) {
   return (row >= 3 && row <= 10) || (col >= 3 && col <= 10);
@@ -45,6 +53,14 @@ function pushMessage(line, type = '') {
   messages.scrollTop = messages.scrollHeight;
 }
 
+function sendJson(payload) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    pushMessage('Connection is down. Trying to reconnect…', 'system');
+    return;
+  }
+  ws.send(JSON.stringify(payload));
+}
+
 function updateRecipientOptions() {
   const current = recipientSelect.value;
   recipientSelect.innerHTML = '<option value="all">Everyone</option>';
@@ -60,6 +76,19 @@ function updateRecipientOptions() {
   recipientSelect.value = [...recipientSelect.options].some((opt) => opt.value === current)
     ? current
     : 'all';
+}
+
+function updateWaitingRoomInfo() {
+  const connectedCount = state.users.length;
+  const seatedPlayers = Object.values(state.playersByColor).filter(Boolean).length;
+  const readyCount = Object.values(state.readyByColor).filter(Boolean).length;
+
+  if (state.started) {
+    waitingRoomInfoEl.textContent = `Connected: ${connectedCount}. Match live (${readyCount}/${seatedPlayers} marked ready).`;
+    return;
+  }
+
+  waitingRoomInfoEl.textContent = `Waiting room: ${connectedCount} connected • ${seatedPlayers}/4 seats filled • ${readyCount}/${seatedPlayers || 4} ready`;
 }
 
 function updateRoster() {
@@ -143,6 +172,7 @@ function applyGameState(payload) {
 
   renderBoard();
   updateRoster();
+  updateWaitingRoomInfo();
   updateGameStatus();
 }
 
@@ -180,57 +210,67 @@ ws.addEventListener('error', () => {
   }
 });
 
-ws.addEventListener('message', ({ data }) => {
-  const msg = JSON.parse(data);
+  ws.addEventListener('close', () => {
+    state.isConnected = false;
+    statusEl.textContent = `Disconnected. Retrying in ${Math.floor(RECONNECT_DELAY_MS / 1000)}s…`;
 
-  if (msg.event === 'welcome') {
-    state.users = msg.payload.users;
-    updateRecipientOptions();
-    applyGameState(msg.payload.game);
-    pushMessage('Welcome! Set your name, chat, and ready up to start.', 'system');
-  }
+    if (!state.reconnectTimer) {
+      state.reconnectTimer = window.setTimeout(() => {
+        state.reconnectTimer = null;
+        connect();
+      }, RECONNECT_DELAY_MS);
+    }
+  });
 
-  if (msg.event === 'users:update') {
-    state.users = msg.payload.users;
-    updateRecipientOptions();
-  }
+  ws.addEventListener('message', ({ data }) => {
+    const msg = JSON.parse(data);
 
-  if (msg.event === 'game:update') {
-    applyGameState(msg.payload);
-  }
+    if (msg.event === 'welcome') {
+      state.users = msg.payload.users;
+      updateRecipientOptions();
+      applyGameState(msg.payload.game);
+      pushMessage('Welcome! Set your name, chat, and ready up to start.', 'system');
+    }
 
-  if (msg.event === 'chat') {
-    const time = new Date(msg.payload.at).toLocaleTimeString();
-    const privateTag = msg.payload.private ? '<span class="private">[private]</span> ' : '';
-    const toTag = msg.payload.to && msg.payload.to !== 'all' ? ` → <strong>${msg.payload.to}</strong>` : '';
-    pushMessage(
-      `${privateTag}<span class="meta">[${time}]</span> <strong>${msg.payload.from}</strong>${toTag}: ${msg.payload.text}`,
-      msg.payload.private ? 'private' : ''
-    );
-  }
+    if (msg.event === 'users:update') {
+      state.users = msg.payload.users;
+      updateRecipientOptions();
+      updateWaitingRoomInfo();
+    }
 
-  if (msg.event === 'system') {
-    pushMessage(`<span class="meta">System:</span> ${msg.payload.text}`, 'system');
-  }
-});
+    if (msg.event === 'game:update') {
+      applyGameState(msg.payload);
+    }
+
+    if (msg.event === 'chat') {
+      const time = new Date(msg.payload.at).toLocaleTimeString();
+      const privateTag = msg.payload.private ? '<span class="private">[private]</span> ' : '';
+      const toTag = msg.payload.to && msg.payload.to !== 'all' ? ` → <strong>${msg.payload.to}</strong>` : '';
+      pushMessage(
+        `${privateTag}<span class="meta">[${time}]</span> <strong>${msg.payload.from}</strong>${toTag}: ${msg.payload.text}`,
+        msg.payload.private ? 'private' : ''
+      );
+    }
+
+    if (msg.event === 'system') {
+      pushMessage(`<span class="meta">System:</span> ${msg.payload.text}`, 'system');
+    }
+  });
+}
 
 nameInput.addEventListener('change', () => {
-  ws.send(
-    JSON.stringify({
-      type: 'set-name',
-      name: nameInput.value,
-    })
-  );
+  sendJson({
+    type: 'set-name',
+    name: nameInput.value,
+  });
 });
 
 readyButton.addEventListener('click', () => {
   if (!state.yourColor || state.started) return;
-  ws.send(
-    JSON.stringify({
-      type: 'game:ready',
-      ready: !state.readyByColor[state.yourColor],
-    })
-  );
+  sendJson({
+    type: 'game:ready',
+    ready: !state.readyByColor[state.yourColor],
+  });
 });
 
 board.addEventListener('click', (event) => {
@@ -268,13 +308,11 @@ board.addEventListener('click', (event) => {
     return;
   }
 
-  ws.send(
-    JSON.stringify({
-      type: 'game:move',
-      from: state.selectedCell,
-      to: { row, col },
-    })
-  );
+  sendJson({
+    type: 'game:move',
+    from: state.selectedCell,
+    to: { row, col },
+  });
 
   state.selectedCell = null;
   renderBoard();
@@ -285,13 +323,11 @@ chatForm.addEventListener('submit', (e) => {
   const text = chatInput.value.trim();
   if (!text) return;
 
-  ws.send(
-    JSON.stringify({
-      type: 'chat',
-      text,
-      to: recipientSelect.value,
-    })
-  );
+  sendJson({
+    type: 'chat',
+    text,
+    to: recipientSelect.value,
+  });
 
   chatInput.value = '';
   chatInput.focus();
@@ -299,4 +335,6 @@ chatForm.addEventListener('submit', (e) => {
 
 renderBoard();
 updateRoster();
+updateWaitingRoomInfo();
 updateGameStatus();
+connect();
