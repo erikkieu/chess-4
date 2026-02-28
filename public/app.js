@@ -19,7 +19,6 @@ const pieces = {
   pawn: '♟',
 };
 
-const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`;
 const RECONNECT_DELAY_MS = 1500;
 
 const state = {
@@ -59,6 +58,73 @@ function sendJson(payload) {
     return;
   }
   ws.send(JSON.stringify(payload));
+}
+
+function connect() {
+  const wsUrl = resolveWebSocketUrl();
+  ws = new WebSocket(wsUrl);
+
+  ws.addEventListener('open', () => {
+    state.isConnected = true;
+    statusEl.textContent = `Connected (${wsUrl})`;
+  });
+
+  ws.addEventListener('error', () => {
+    statusEl.textContent = `Connection error (${wsUrl})`;
+    if (location.hostname.endsWith('netlify.app') && !window.CHESS_WS_URL) {
+      pushMessage(
+        'This Netlify site serves the UI only. Add ?ws=wss://<your-backend-host> or set window.CHESS_WS_URL before app.js loads.',
+        'system'
+      );
+    }
+  });
+
+  ws.addEventListener('close', () => {
+    state.isConnected = false;
+    statusEl.textContent = `Disconnected. Retrying in ${Math.floor(RECONNECT_DELAY_MS / 1000)}s…`;
+
+    if (!state.reconnectTimer) {
+      state.reconnectTimer = window.setTimeout(() => {
+        state.reconnectTimer = null;
+        connect();
+      }, RECONNECT_DELAY_MS);
+    }
+  });
+
+  ws.addEventListener('message', ({ data }) => {
+    const msg = JSON.parse(data);
+
+    if (msg.event === 'welcome') {
+      state.users = msg.payload.users;
+      updateRecipientOptions();
+      applyGameState(msg.payload.game);
+      pushMessage('Welcome! Set your name, chat, and ready up to start.', 'system');
+    }
+
+    if (msg.event === 'users:update') {
+      state.users = msg.payload.users;
+      updateRecipientOptions();
+      updateWaitingRoomInfo();
+    }
+
+    if (msg.event === 'game:update') {
+      applyGameState(msg.payload);
+    }
+
+    if (msg.event === 'chat') {
+      const time = new Date(msg.payload.at).toLocaleTimeString();
+      const privateTag = msg.payload.private ? '<span class="private">[private]</span> ' : '';
+      const toTag = msg.payload.to && msg.payload.to !== 'all' ? ` → <strong>${msg.payload.to}</strong>` : '';
+      pushMessage(
+        `${privateTag}<span class="meta">[${time}]</span> <strong>${msg.payload.from}</strong>${toTag}: ${msg.payload.text}`,
+        msg.payload.private ? 'private' : ''
+      );
+    }
+
+    if (msg.event === 'system') {
+      pushMessage(`<span class="meta">System:</span> ${msg.payload.text}`, 'system');
+    }
+  });
 }
 
 function updateRecipientOptions() {
@@ -186,76 +252,6 @@ function resolveWebSocketUrl() {
 
   const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${wsProtocol}//${location.host}`;
-}
-
-const wsUrl = resolveWebSocketUrl();
-const ws = new WebSocket(wsUrl);
-
-ws.addEventListener('open', () => {
-  statusEl.textContent = `Connected (${wsUrl})`;
-});
-
-ws.addEventListener('close', () => {
-  statusEl.textContent = `Disconnected (${wsUrl})`;
-});
-
-
-ws.addEventListener('error', () => {
-  statusEl.textContent = `Connection error (${wsUrl})`;
-  if (location.hostname.endsWith('netlify.app') && !window.CHESS_WS_URL) {
-    pushMessage(
-      'This Netlify site serves the UI only. Add ?ws=wss://<your-backend-host> or set window.CHESS_WS_URL before app.js loads.',
-      'system'
-    );
-  }
-});
-
-  ws.addEventListener('close', () => {
-    state.isConnected = false;
-    statusEl.textContent = `Disconnected. Retrying in ${Math.floor(RECONNECT_DELAY_MS / 1000)}s…`;
-
-    if (!state.reconnectTimer) {
-      state.reconnectTimer = window.setTimeout(() => {
-        state.reconnectTimer = null;
-        connect();
-      }, RECONNECT_DELAY_MS);
-    }
-  });
-
-  ws.addEventListener('message', ({ data }) => {
-    const msg = JSON.parse(data);
-
-    if (msg.event === 'welcome') {
-      state.users = msg.payload.users;
-      updateRecipientOptions();
-      applyGameState(msg.payload.game);
-      pushMessage('Welcome! Set your name, chat, and ready up to start.', 'system');
-    }
-
-    if (msg.event === 'users:update') {
-      state.users = msg.payload.users;
-      updateRecipientOptions();
-      updateWaitingRoomInfo();
-    }
-
-    if (msg.event === 'game:update') {
-      applyGameState(msg.payload);
-    }
-
-    if (msg.event === 'chat') {
-      const time = new Date(msg.payload.at).toLocaleTimeString();
-      const privateTag = msg.payload.private ? '<span class="private">[private]</span> ' : '';
-      const toTag = msg.payload.to && msg.payload.to !== 'all' ? ` → <strong>${msg.payload.to}</strong>` : '';
-      pushMessage(
-        `${privateTag}<span class="meta">[${time}]</span> <strong>${msg.payload.from}</strong>${toTag}: ${msg.payload.text}`,
-        msg.payload.private ? 'private' : ''
-      );
-    }
-
-    if (msg.event === 'system') {
-      pushMessage(`<span class="meta">System:</span> ${msg.payload.text}`, 'system');
-    }
-  });
 }
 
 nameInput.addEventListener('change', () => {
