@@ -40,6 +40,11 @@
       </aside>
     </main>
 
+    <script>
+      // Optional production override. Example:
+      // window.CHESS_WS_URL = "wss://your-websocket-backend.example.com";
+      window.CHESS_WS_URL = window.CHESS_WS_URL || null;
+    </script>
     <script src="app.js"></script>
   </body>
 </html>
