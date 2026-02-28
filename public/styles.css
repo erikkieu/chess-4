@@ -91,6 +91,14 @@ button:disabled {
 }
 
 .status { font-size: 0.85rem; color: #cfd7ff; }
+.waiting-room-info {
+  color: #9de3c2;
+  border: 1px solid #ffffff20;
+  border-radius: 8px;
+  padding: 0.4rem 0.55rem;
+  background: #18242e;
+}
+
 
 .roster {
   list-style: none;
