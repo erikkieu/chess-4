@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const GAME_COLORS = ['gold', 'red', 'blue', 'green'];
+const TURN_DURATION_MS = 20_000;
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -22,7 +23,10 @@ const gameState = {
   readyByColor: { gold: false, red: false, blue: false, green: false },
   started: false,
   turn: null,
+  turnDeadline: null,
 };
+
+let turnTimer = null;
 
 function keyFor(row, col) {
   return `${row},${col}`;
@@ -318,6 +322,7 @@ function snapshotFor(client) {
       readyByColor: gameState.readyByColor,
       started: gameState.started,
       turn: gameState.turn,
+      turnDeadline: gameState.turnDeadline,
       yourColor: getColorForName(client.name),
     },
   };
@@ -330,14 +335,44 @@ function broadcastGameState() {
 }
 
 function resetGame(reasonText = '') {
+  clearTurnTimer();
   gameState.board = createInitialBoard();
   gameState.readyByColor = { gold: false, red: false, blue: false, green: false };
   gameState.started = false;
   gameState.turn = null;
+  gameState.turnDeadline = null;
 
   if (reasonText) {
     broadcast('system', { text: reasonText });
   }
+}
+
+function clearTurnTimer() {
+  if (turnTimer) {
+    clearTimeout(turnTimer);
+    turnTimer = null;
+  }
+}
+
+function startTurnTimer() {
+  clearTurnTimer();
+  if (!gameState.started || !gameState.turn) return;
+
+  gameState.turnDeadline = Date.now() + TURN_DURATION_MS;
+  turnTimer = setTimeout(() => {
+    if (!gameState.started || !gameState.turn) return;
+    const timedOutColor = gameState.turn;
+    const timedOutPlayer = gameState.playersByColor[timedOutColor] || timedOutColor.toUpperCase();
+    const turnIndex = GAME_COLORS.indexOf(timedOutColor);
+    gameState.turn = GAME_COLORS[(turnIndex + 1) % GAME_COLORS.length];
+    gameState.turnDeadline = Date.now() + TURN_DURATION_MS;
+
+    broadcast('system', {
+      text: `${timedOutPlayer} ran out of time. Turn skipped to ${gameState.turn.toUpperCase()}.`,
+    });
+    startTurnTimer();
+    broadcastGameState();
+  }, TURN_DURATION_MS);
 }
 
 function maybeStartGame() {
@@ -348,6 +383,7 @@ function maybeStartGame() {
   gameState.board = createInitialBoard();
   gameState.started = true;
   gameState.turn = GAME_COLORS[Math.floor(Math.random() * GAME_COLORS.length)];
+  startTurnTimer();
   broadcast('system', {
     text: `All players are ready. Game started! ${gameState.turn.toUpperCase()} moves first.`,
   });
@@ -506,6 +542,7 @@ server.on('upgrade', (req, socket) => {
 
         const turnIndex = GAME_COLORS.indexOf(color);
         gameState.turn = GAME_COLORS[(turnIndex + 1) % GAME_COLORS.length];
+        startTurnTimer();
         broadcastGameState();
         return;
       }

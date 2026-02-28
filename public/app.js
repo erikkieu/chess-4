@@ -9,6 +9,8 @@ const readyButton = document.querySelector('#readyButton');
 const gameStatusEl = document.querySelector('#gameStatus');
 const rosterEl = document.querySelector('#roster');
 const waitingRoomInfoEl = document.querySelector('#waitingRoomInfo');
+const turnIndicatorEl = document.querySelector('#turnIndicator');
+const timerDisplayEl = document.querySelector('#timerDisplay');
 
 const pieces = {
   rook: '♜',
@@ -28,20 +30,146 @@ const state = {
   readyByColor: { gold: false, red: false, blue: false, green: false },
   started: false,
   turn: null,
+  turnDeadline: null,
   yourColor: null,
   selectedCell: null,
+  legalMoves: [],
   isConnected: false,
   reconnectTimer: null,
 };
 
 let ws = null;
+let turnTimerInterval = null;
+
+function keyFor(row, col) {
+  return `${row},${col}`;
+}
 
 function inBoard(row, col) {
   return (row >= 3 && row <= 10) || (col >= 3 && col <= 10);
 }
 
 function pieceAt(row, col) {
-  return state.board[`${row},${col}`] || null;
+  return state.board[keyFor(row, col)] || null;
+}
+
+function isClearPath(from, to, dr, dc) {
+  let row = from.row + dr;
+  let col = from.col + dc;
+
+  while (row !== to.row || col !== to.col) {
+    if (!inBoard(row, col)) return false;
+    if (pieceAt(row, col)) return false;
+    row += dr;
+    col += dc;
+  }
+
+  return true;
+}
+
+function validatePawnMove(piece, from, to) {
+  const rowDiff = to.row - from.row;
+  const colDiff = to.col - from.col;
+  const target = pieceAt(to.row, to.col);
+
+  const pawnConfig = {
+    gold: { move: [1, 0], captures: [[1, 1], [1, -1]], start: (r) => r === 1 },
+    red: { move: [-1, 0], captures: [[-1, 1], [-1, -1]], start: (r) => r === 12 },
+    blue: { move: [0, 1], captures: [[1, 1], [-1, 1]], start: (_, c) => c === 1 },
+    green: { move: [0, -1], captures: [[1, -1], [-1, -1]], start: (_, c) => c === 12 },
+  };
+
+  const config = pawnConfig[piece.color];
+
+  if (target) {
+    return config.captures.some(([dr, dc]) => dr === rowDiff && dc === colDiff);
+  }
+
+  const [stepRow, stepCol] = config.move;
+  if (rowDiff === stepRow && colDiff === stepCol) {
+    return true;
+  }
+
+  if (config.start(from.row, from.col) && rowDiff === stepRow * 2 && colDiff === stepCol * 2) {
+    const midRow = from.row + stepRow;
+    const midCol = from.col + stepCol;
+    return !pieceAt(midRow, midCol);
+  }
+
+  return false;
+}
+
+function validateMove(piece, from, to) {
+  if (!inBoard(to.row, to.col)) return false;
+  if (from.row === to.row && from.col === to.col) return false;
+
+  const target = pieceAt(to.row, to.col);
+  if (target && target.color === piece.color) return false;
+
+  const rowDiff = to.row - from.row;
+  const colDiff = to.col - from.col;
+  const absRow = Math.abs(rowDiff);
+  const absCol = Math.abs(colDiff);
+
+  if (piece.type === 'pawn') {
+    return validatePawnMove(piece, from, to);
+  }
+
+  if (piece.type === 'knight') {
+    return (absRow === 2 && absCol === 1) || (absRow === 1 && absCol === 2);
+  }
+
+  if (piece.type === 'king') {
+    return absRow <= 1 && absCol <= 1;
+  }
+
+  if (piece.type === 'rook') {
+    if (rowDiff !== 0 && colDiff !== 0) return false;
+    const dr = rowDiff === 0 ? 0 : rowDiff / absRow;
+    const dc = colDiff === 0 ? 0 : colDiff / absCol;
+    return isClearPath(from, to, dr, dc);
+  }
+
+  if (piece.type === 'bishop') {
+    if (absRow !== absCol) return false;
+    const dr = rowDiff / absRow;
+    const dc = colDiff / absCol;
+    return isClearPath(from, to, dr, dc);
+  }
+
+  if (piece.type === 'queen') {
+    if (rowDiff === 0 || colDiff === 0) {
+      const dr = rowDiff === 0 ? 0 : rowDiff / absRow;
+      const dc = colDiff === 0 ? 0 : colDiff / absCol;
+      return isClearPath(from, to, dr, dc);
+    }
+    if (absRow === absCol) {
+      const dr = rowDiff / absRow;
+      const dc = colDiff / absCol;
+      return isClearPath(from, to, dr, dc);
+    }
+    return false;
+  }
+
+  return false;
+}
+
+function collectLegalMoves(from) {
+  const piece = pieceAt(from.row, from.col);
+  if (!piece) return [];
+
+  const legalMoves = [];
+  for (let row = 0; row < 14; row += 1) {
+    for (let col = 0; col < 14; col += 1) {
+      if (!inBoard(row, col)) continue;
+      const to = { row, col };
+      if (validateMove(piece, from, to)) {
+        legalMoves.push({ row, col });
+      }
+    }
+  }
+
+  return legalMoves;
 }
 
 function pushMessage(line, type = '') {
@@ -162,16 +290,51 @@ function updateRoster() {
   ['gold', 'red', 'blue', 'green'].forEach((color) => {
     const li = document.createElement('li');
     li.className = `roster-${color}`;
+    if (state.turn === color && state.started) {
+      li.classList.add('current-turn');
+    }
+
     const playerName = state.playersByColor[color] || 'Waiting for player…';
     const ready = state.readyByColor[color] ? '✅ ready' : '⏳ not ready';
-    const turn = state.turn === color && state.started ? ' • turn' : '';
+    const turn = state.turn === color && state.started ? ' • ACTIVE TURN' : '';
     li.textContent = `${color.toUpperCase()}: ${playerName} (${ready}${turn})`;
     rosterEl.append(li);
   });
 }
 
+function stopTurnCountdown() {
+  if (turnTimerInterval) {
+    clearInterval(turnTimerInterval);
+    turnTimerInterval = null;
+  }
+}
+
+function refreshTurnCountdown() {
+  if (!state.started || !state.turnDeadline) {
+    timerDisplayEl.textContent = 'Move timer: --';
+    return;
+  }
+
+  const secondsLeft = Math.max(0, Math.ceil((state.turnDeadline - Date.now()) / 1000));
+  timerDisplayEl.textContent = `Move timer: ${secondsLeft}s`;
+}
+
+function startTurnCountdown() {
+  stopTurnCountdown();
+  if (!state.started || !state.turnDeadline) {
+    refreshTurnCountdown();
+    return;
+  }
+
+  refreshTurnCountdown();
+  turnTimerInterval = setInterval(refreshTurnCountdown, 250);
+}
+
 function updateGameStatus() {
   if (!state.yourColor) {
+    turnIndicatorEl.textContent = state.started
+      ? `Turn: ${String(state.turn || '').toUpperCase()}`
+      : 'Turn: waiting for players';
     gameStatusEl.textContent = 'Observer mode (all colors currently assigned).';
     readyButton.disabled = true;
     readyButton.textContent = 'Ready';
@@ -180,6 +343,7 @@ function updateGameStatus() {
 
   if (!state.started) {
     const isReady = !!state.readyByColor[state.yourColor];
+    turnIndicatorEl.textContent = 'Turn: game not started';
     gameStatusEl.textContent = `You are ${state.yourColor.toUpperCase()}. Click ready when you are prepared.`;
     readyButton.disabled = false;
     readyButton.textContent = isReady ? 'Unready' : 'Ready';
@@ -188,15 +352,20 @@ function updateGameStatus() {
 
   readyButton.disabled = true;
   readyButton.textContent = 'Ready';
+
   if (state.turn === state.yourColor) {
-    gameStatusEl.textContent = `Your turn (${state.yourColor.toUpperCase()}). Select a piece then its destination.`;
+    turnIndicatorEl.textContent = `🟢 YOUR TURN (${state.yourColor.toUpperCase()})`;
+    gameStatusEl.textContent = 'Your turn: click one of your pieces to view legal moves, then click a highlighted square.';
   } else {
+    turnIndicatorEl.textContent = `⏳ ${String(state.turn || '').toUpperCase()} TO MOVE`;
     gameStatusEl.textContent = `Game in progress. Waiting for ${String(state.turn || '').toUpperCase()} to move.`;
   }
 }
 
 function renderBoard() {
   board.innerHTML = '';
+
+  const legalMoveSet = new Set(state.legalMoves.map((move) => keyFor(move.row, move.col)));
 
   for (let row = 0; row < 14; row += 1) {
     for (let col = 0; col < 14; col += 1) {
@@ -216,6 +385,13 @@ function renderBoard() {
           cell.textContent = pieces[piece.type];
           cell.classList.add(`piece-${piece.color}`);
         }
+
+        if (legalMoveSet.has(keyFor(row, col))) {
+          cell.classList.add('legal-move');
+          if (piece) {
+            cell.classList.add('legal-capture');
+          }
+        }
       }
 
       if (state.selectedCell && state.selectedCell.row === row && state.selectedCell.col === col) {
@@ -233,13 +409,16 @@ function applyGameState(payload) {
   state.readyByColor = payload.readyByColor || state.readyByColor;
   state.started = !!payload.started;
   state.turn = payload.turn || null;
+  state.turnDeadline = payload.turnDeadline || null;
   state.yourColor = payload.yourColor || null;
   state.selectedCell = null;
+  state.legalMoves = [];
 
   renderBoard();
   updateRoster();
   updateWaitingRoomInfo();
   updateGameStatus();
+  startTurnCountdown();
 }
 
 function resolveWebSocketUrl() {
@@ -281,6 +460,7 @@ board.addEventListener('click', (event) => {
 
   if (!state.started || !state.yourColor || state.turn !== state.yourColor) {
     state.selectedCell = null;
+    state.legalMoves = [];
     renderBoard();
     return;
   }
@@ -288,19 +468,27 @@ board.addEventListener('click', (event) => {
   if (!state.selectedCell) {
     if (!piece || piece.color !== state.yourColor) return;
     state.selectedCell = { row, col };
+    state.legalMoves = collectLegalMoves(state.selectedCell);
     renderBoard();
     return;
   }
 
   if (state.selectedCell.row === row && state.selectedCell.col === col) {
     state.selectedCell = null;
+    state.legalMoves = [];
     renderBoard();
     return;
   }
 
   if (piece && piece.color === state.yourColor) {
     state.selectedCell = { row, col };
+    state.legalMoves = collectLegalMoves(state.selectedCell);
     renderBoard();
+    return;
+  }
+
+  const isLegalTarget = state.legalMoves.some((move) => move.row === row && move.col === col);
+  if (!isLegalTarget) {
     return;
   }
 
@@ -311,6 +499,7 @@ board.addEventListener('click', (event) => {
   });
 
   state.selectedCell = null;
+  state.legalMoves = [];
   renderBoard();
 });
 
@@ -333,4 +522,5 @@ renderBoard();
 updateRoster();
 updateWaitingRoomInfo();
 updateGameStatus();
+refreshTurnCountdown();
 connect();
