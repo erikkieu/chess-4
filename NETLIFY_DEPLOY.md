@@ -47,3 +47,19 @@ Quick override options supported by `public/app.js`:
    - `https://semlastudios.netlify.app/?ws=wss://<your-backend-host>`
 2. Global variable (persistent, in `index.html` before `app.js`):
    - `window.CHESS_WS_URL = 'wss://<your-backend-host>'`
+
+
+## Render quick setup for `server.js`
+
+Use Render for the persistent Node/WebSocket backend:
+
+- Service type: **Web Service**
+- Runtime: **Node**
+- Build command: `npm install`
+- Start command: `npm start`
+- Environment variable: `PORT` is optional (Render injects it; `server.js` reads `process.env.PORT`)
+
+After deploy, point the Netlify UI to Render via:
+
+- `?ws=wss://<your-render-domain>`
+- or `window.CHESS_WS_URL = 'wss://<your-render-domain>'` before `app.js` loads.
