@@ -5,6 +5,7 @@ const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const GAME_COLORS = ['gold', 'red', 'blue', 'green'];
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -15,18 +16,167 @@ const MIME_TYPES = {
 
 const clients = new Map();
 
-function serveFile(filePath, res) {
-  const ext = path.extname(filePath);
-  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-  fs.readFile(filePath, (err, content) => {
-    if (err) {
-      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-      res.end('Not Found');
-      return;
+const gameState = {
+  board: createInitialBoard(),
+  playersByColor: { gold: null, red: null, blue: null, green: null },
+  readyByColor: { gold: false, red: false, blue: false, green: false },
+  started: false,
+  turn: null,
+};
+
+function keyFor(row, col) {
+  return `${row},${col}`;
+}
+
+function inBoard(row, col) {
+  return (row >= 3 && row <= 10) || (col >= 3 && col <= 10);
+}
+
+function createInitialBoard() {
+  const board = {};
+
+  function set(row, col, type, color) {
+    board[keyFor(row, col)] = { type, color, hasMoved: false };
+  }
+
+  const edgeKingsFirst = ['rook', 'knight', 'bishop', 'king', 'queen', 'bishop', 'knight', 'rook'];
+  const edgeQueensFirst = ['rook', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'rook'];
+
+  for (let col = 3; col <= 10; col += 1) {
+    set(0, col, edgeKingsFirst[col - 3], 'gold');
+    set(1, col, 'pawn', 'gold');
+    set(13, col, edgeQueensFirst[col - 3], 'red');
+    set(12, col, 'pawn', 'red');
+  }
+
+  for (let row = 3; row <= 10; row += 1) {
+    set(row, 0, edgeKingsFirst[row - 3], 'blue');
+    set(row, 1, 'pawn', 'blue');
+    set(row, 13, edgeQueensFirst[row - 3], 'green');
+    set(row, 12, 'pawn', 'green');
+  }
+
+  return board;
+}
+
+function pieceAt(board, row, col) {
+  return board[keyFor(row, col)] || null;
+}
+
+function isClearPath(board, from, to, dr, dc) {
+  let row = from.row + dr;
+  let col = from.col + dc;
+
+  while (row !== to.row || col !== to.col) {
+    if (!inBoard(row, col)) return false;
+    if (pieceAt(board, row, col)) return false;
+    row += dr;
+    col += dc;
+  }
+
+  return true;
+}
+
+function validatePawnMove(board, piece, from, to) {
+  const rowDiff = to.row - from.row;
+  const colDiff = to.col - from.col;
+  const target = pieceAt(board, to.row, to.col);
+
+  const pawnConfig = {
+    gold: { move: [1, 0], captures: [[1, 1], [1, -1]], start: (r) => r === 1 },
+    red: { move: [-1, 0], captures: [[-1, 1], [-1, -1]], start: (r) => r === 12 },
+    blue: { move: [0, 1], captures: [[1, 1], [-1, 1]], start: (_, c) => c === 1 },
+    green: { move: [0, -1], captures: [[1, -1], [-1, -1]], start: (_, c) => c === 12 },
+  };
+
+  const config = pawnConfig[piece.color];
+
+  if (target) {
+    return config.captures.some(([dr, dc]) => dr === rowDiff && dc === colDiff);
+  }
+
+  const [stepRow, stepCol] = config.move;
+  if (rowDiff === stepRow && colDiff === stepCol) {
+    return true;
+  }
+
+  if (config.start(from.row, from.col) && rowDiff === stepRow * 2 && colDiff === stepCol * 2) {
+    const midRow = from.row + stepRow;
+    const midCol = from.col + stepCol;
+    return !pieceAt(board, midRow, midCol);
+  }
+
+  return false;
+}
+
+function validateMove(board, piece, from, to) {
+  if (!inBoard(to.row, to.col)) return false;
+  if (from.row === to.row && from.col === to.col) return false;
+
+  const target = pieceAt(board, to.row, to.col);
+  if (target && target.color === piece.color) return false;
+
+  const rowDiff = to.row - from.row;
+  const colDiff = to.col - from.col;
+  const absRow = Math.abs(rowDiff);
+  const absCol = Math.abs(colDiff);
+
+  if (piece.type === 'pawn') {
+    return validatePawnMove(board, piece, from, to);
+  }
+
+  if (piece.type === 'knight') {
+    return (absRow === 2 && absCol === 1) || (absRow === 1 && absCol === 2);
+  }
+
+  if (piece.type === 'king') {
+    return absRow <= 1 && absCol <= 1;
+  }
+
+  if (piece.type === 'rook') {
+    if (rowDiff !== 0 && colDiff !== 0) return false;
+    const dr = rowDiff === 0 ? 0 : rowDiff / absRow;
+    const dc = colDiff === 0 ? 0 : colDiff / absCol;
+    return isClearPath(board, from, to, dr, dc);
+  }
+
+  if (piece.type === 'bishop') {
+    if (absRow !== absCol) return false;
+    const dr = rowDiff / absRow;
+    const dc = colDiff / absCol;
+    return isClearPath(board, from, to, dr, dc);
+  }
+
+  if (piece.type === 'queen') {
+    if (rowDiff === 0 || colDiff === 0) {
+      const dr = rowDiff === 0 ? 0 : rowDiff / absRow;
+      const dc = colDiff === 0 ? 0 : colDiff / absCol;
+      return isClearPath(board, from, to, dr, dc);
     }
-    res.writeHead(200, { 'Content-Type': contentType });
-    res.end(content);
-  });
+    if (absRow === absCol) {
+      const dr = rowDiff / absRow;
+      const dc = colDiff / absCol;
+      return isClearPath(board, from, to, dr, dc);
+    }
+    return false;
+  }
+
+  return false;
+}
+
+function promoteIfNeeded(piece, row, col) {
+  if (piece.type !== 'pawn') return piece;
+
+  if (
+    (piece.color === 'gold' && row === 13) ||
+    (piece.color === 'red' && row === 0) ||
+    (piece.color === 'blue' && col === 13) ||
+    (piece.color === 'green' && col === 0)
+  ) {
+    return { ...piece, type: 'queen' };
+  }
+
+  return piece;
 }
 
 function sendFrame(socket, data) {
@@ -124,6 +274,99 @@ function sanitizeName(raw) {
   return value || `guest-${Math.floor(Math.random() * 9999)}`;
 }
 
+function uniqueName(candidate, socket) {
+  const taken = new Set(
+    [...clients.entries()]
+      .filter(([otherSocket]) => otherSocket !== socket)
+      .map(([, client]) => client.name)
+  );
+
+  if (!taken.has(candidate)) return candidate;
+  let suffix = 2;
+  while (taken.has(`${candidate}-${suffix}`)) {
+    suffix += 1;
+  }
+  return `${candidate}-${suffix}`;
+}
+
+function getColorForName(name) {
+  return GAME_COLORS.find((color) => gameState.playersByColor[color] === name) || null;
+}
+
+function assignColor(name) {
+  if (getColorForName(name)) return;
+  const freeColor = GAME_COLORS.find((color) => !gameState.playersByColor[color]);
+  if (!freeColor) return;
+  gameState.playersByColor[freeColor] = name;
+}
+
+function unassignColor(name) {
+  GAME_COLORS.forEach((color) => {
+    if (gameState.playersByColor[color] === name) {
+      gameState.playersByColor[color] = null;
+      gameState.readyByColor[color] = false;
+    }
+  });
+}
+
+function snapshotFor(client) {
+  return {
+    users: usersList(),
+    game: {
+      board: gameState.board,
+      playersByColor: gameState.playersByColor,
+      readyByColor: gameState.readyByColor,
+      started: gameState.started,
+      turn: gameState.turn,
+      yourColor: getColorForName(client.name),
+    },
+  };
+}
+
+function broadcastGameState() {
+  clients.forEach((client, socket) => {
+    emit(socket, 'game:update', snapshotFor(client).game);
+  });
+}
+
+function resetGame(reasonText = '') {
+  gameState.board = createInitialBoard();
+  gameState.readyByColor = { gold: false, red: false, blue: false, green: false };
+  gameState.started = false;
+  gameState.turn = null;
+
+  if (reasonText) {
+    broadcast('system', { text: reasonText });
+  }
+}
+
+function maybeStartGame() {
+  const filled = GAME_COLORS.every((color) => !!gameState.playersByColor[color]);
+  const allReady = GAME_COLORS.every((color) => gameState.readyByColor[color]);
+  if (!filled || !allReady || gameState.started) return;
+
+  gameState.board = createInitialBoard();
+  gameState.started = true;
+  gameState.turn = GAME_COLORS[Math.floor(Math.random() * GAME_COLORS.length)];
+  broadcast('system', {
+    text: `All players are ready. Game started! ${gameState.turn.toUpperCase()} moves first.`,
+  });
+}
+
+function serveFile(filePath, res) {
+  const ext = path.extname(filePath);
+  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+  fs.readFile(filePath, (err, content) => {
+    if (err) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Not Found');
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': contentType });
+    res.end(content);
+  });
+}
+
 const server = http.createServer((req, res) => {
   const target = req.url === '/' ? '/index.html' : req.url;
   const filePath = path.join(PUBLIC_DIR, path.normalize(target));
@@ -158,10 +401,13 @@ server.on('upgrade', (req, socket) => {
 
   socket.write(`${headers.join('\r\n')}\r\n\r\n`);
 
-  clients.set(socket, { name: `guest-${Math.floor(Math.random() * 9999)}`, buffer: Buffer.alloc(0) });
+  const guestName = uniqueName(`guest-${Math.floor(Math.random() * 9999)}`, socket);
+  clients.set(socket, { name: guestName, buffer: Buffer.alloc(0) });
+  assignColor(guestName);
 
-  emit(socket, 'welcome', { users: usersList() });
+  emit(socket, 'welcome', snapshotFor(clients.get(socket)));
   broadcast('users:update', { users: usersList() });
+  broadcastGameState();
 
   socket.on('data', (chunk) => {
     const client = clients.get(socket);
@@ -185,8 +431,82 @@ server.on('upgrade', (req, socket) => {
       }
 
       if (parsed.type === 'set-name') {
-        client.name = sanitizeName(parsed.name);
+        const oldName = client.name;
+        const newName = uniqueName(sanitizeName(parsed.name), socket);
+        client.name = newName;
+        const color = getColorForName(oldName);
+        if (color) {
+          gameState.playersByColor[color] = newName;
+        } else {
+          assignColor(newName);
+        }
+
         broadcast('users:update', { users: usersList() });
+        broadcastGameState();
+        return;
+      }
+
+      if (parsed.type === 'game:ready') {
+        const color = getColorForName(client.name);
+        if (!color) {
+          emit(socket, 'system', { text: 'Only assigned players can ready up.' });
+          return;
+        }
+        if (gameState.started) {
+          emit(socket, 'system', { text: 'Game already started.' });
+          return;
+        }
+
+        gameState.readyByColor[color] = !!parsed.ready;
+        maybeStartGame();
+        broadcastGameState();
+        return;
+      }
+
+      if (parsed.type === 'game:move') {
+        const color = getColorForName(client.name);
+        if (!color || !gameState.started) return;
+        if (gameState.turn !== color) {
+          emit(socket, 'system', { text: 'It is not your turn.' });
+          return;
+        }
+
+        const from = {
+          row: Number(parsed.from?.row),
+          col: Number(parsed.from?.col),
+        };
+        const to = {
+          row: Number(parsed.to?.row),
+          col: Number(parsed.to?.col),
+        };
+
+        if (
+          Number.isNaN(from.row) ||
+          Number.isNaN(from.col) ||
+          Number.isNaN(to.row) ||
+          Number.isNaN(to.col)
+        ) {
+          return;
+        }
+
+        const movingPiece = pieceAt(gameState.board, from.row, from.col);
+        if (!movingPiece || movingPiece.color !== color) {
+          emit(socket, 'system', { text: 'You can only move your own pieces.' });
+          return;
+        }
+
+        if (!validateMove(gameState.board, movingPiece, from, to)) {
+          emit(socket, 'system', { text: 'Illegal move for that piece.' });
+          return;
+        }
+
+        const updated = promoteIfNeeded({ ...movingPiece, hasMoved: true }, to.row, to.col);
+        delete gameState.board[keyFor(from.row, from.col)];
+        gameState.board[keyFor(to.row, to.col)] = updated;
+
+        const turnIndex = GAME_COLORS.indexOf(color);
+        gameState.turn = GAME_COLORS[(turnIndex + 1) % GAME_COLORS.length];
+        broadcastGameState();
         return;
       }
 
@@ -221,22 +541,27 @@ server.on('upgrade', (req, socket) => {
     });
   });
 
-  socket.on('close', () => {
-    clients.delete(socket);
-    broadcast('users:update', { users: usersList() });
-  });
+  function onDisconnect() {
+    const client = clients.get(socket);
+    if (!client) return;
 
-  socket.on('end', () => {
+    unassignColor(client.name);
     clients.delete(socket);
-    broadcast('users:update', { users: usersList() });
-  });
 
-  socket.on('error', () => {
-    clients.delete(socket);
+    if (gameState.started) {
+      resetGame(`${client.name} disconnected. Match reset and waiting for players to ready up again.`);
+    }
+
     broadcast('users:update', { users: usersList() });
-  });
+    broadcastGameState();
+  }
+
+  socket.on('close', onDisconnect);
+  socket.on('end', onDisconnect);
+  socket.on('error', onDisconnect);
 });
 
 server.listen(PORT, () => {
   console.log(`Chess-4 server running on http://localhost:${PORT}`);
+  console.log(`LAN clients can connect using ws/http on port ${PORT} to this host IP.`);
 });

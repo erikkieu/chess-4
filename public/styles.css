@@ -45,11 +45,13 @@ body {
   display: grid;
   place-items: center;
   font-size: 38px;
+  border: none;
 }
 
 .cell.dark { background: var(--dark); }
 .cell.light { background: var(--light); }
 .cell.void { background: transparent; }
+.cell.selected { outline: 3px solid #5b8cff; outline-offset: -3px; }
 
 .piece-blue { color: var(--blue); }
 .piece-green { color: var(--green); }
@@ -83,7 +85,31 @@ button {
   border-color: #3362c5;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 .status { font-size: 0.85rem; color: #cfd7ff; }
+
+.roster {
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #ffffff20;
+  border-radius: 8px;
+  background: #141b22;
+}
+
+.roster li {
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.roster-gold { color: var(--gold); }
+.roster-red { color: var(--red); }
+.roster-blue { color: var(--blue); }
+.roster-green { color: var(--green); }
 
 .messages {
   list-style: none;
@@ -94,7 +120,7 @@ button {
   background: #11171d;
   flex: 1;
   overflow: auto;
-  min-height: 260px;
+  min-height: 220px;
 }
 
 .messages li {

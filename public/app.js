@@ -5,6 +5,9 @@ const messages = document.querySelector('#messages');
 const statusEl = document.querySelector('#status');
 const chatForm = document.querySelector('#chatForm');
 const chatInput = document.querySelector('#chatInput');
+const readyButton = document.querySelector('#readyButton');
+const gameStatusEl = document.querySelector('#gameStatus');
+const rosterEl = document.querySelector('#roster');
 
 const pieces = {
   rook: '♜',
@@ -17,6 +20,13 @@ const pieces = {
 
 const state = {
   users: [],
+  board: {},
+  playersByColor: { gold: null, red: null, blue: null, green: null },
+  readyByColor: { gold: false, red: false, blue: false, green: false },
+  started: false,
+  turn: null,
+  yourColor: null,
+  selectedCell: null,
 };
 
 function inBoard(row, col) {
@@ -24,53 +34,7 @@ function inBoard(row, col) {
 }
 
 function pieceAt(row, col) {
-  if (row === 0 && col >= 3 && col <= 10) {
-    const order = ['rook', 'knight', 'bishop', 'king', 'queen', 'bishop', 'knight', 'rook'];
-    return { glyph: pieces[order[col - 3]], cls: 'piece-gold' };
-  }
-  if (row === 1 && col >= 3 && col <= 10) return { glyph: pieces.pawn, cls: 'piece-gold' };
-
-  if (row === 13 && col >= 3 && col <= 10) {
-    const order = ['rook', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'rook'];
-    return { glyph: pieces[order[col - 3]], cls: 'piece-red' };
-  }
-  if (row === 12 && col >= 3 && col <= 10) return { glyph: pieces.pawn, cls: 'piece-red' };
-
-  if (col === 0 && row >= 3 && row <= 10) {
-    const order = ['rook', 'knight', 'bishop', 'king', 'queen', 'bishop', 'knight', 'rook'];
-    return { glyph: pieces[order[row - 3]], cls: 'piece-blue' };
-  }
-  if (col === 1 && row >= 3 && row <= 10) return { glyph: pieces.pawn, cls: 'piece-blue' };
-
-  if (col === 13 && row >= 3 && row <= 10) {
-    const order = ['rook', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'rook'];
-    return { glyph: pieces[order[row - 3]], cls: 'piece-green' };
-  }
-  if (col === 12 && row >= 3 && row <= 10) return { glyph: pieces.pawn, cls: 'piece-green' };
-
-  return null;
-}
-
-function drawBoard() {
-  for (let row = 0; row < 14; row += 1) {
-    for (let col = 0; col < 14; col += 1) {
-      const cell = document.createElement('div');
-      cell.classList.add('cell');
-
-      if (!inBoard(row, col)) {
-        cell.classList.add('void');
-      } else {
-        cell.classList.add((row + col) % 2 ? 'dark' : 'light');
-        const piece = pieceAt(row, col);
-        if (piece) {
-          cell.textContent = piece.glyph;
-          cell.classList.add(piece.cls);
-        }
-      }
-
-      board.append(cell);
-    }
-  }
+  return state.board[`${row},${col}`] || null;
 }
 
 function pushMessage(line, type = '') {
@@ -98,6 +62,90 @@ function updateRecipientOptions() {
     : 'all';
 }
 
+function updateRoster() {
+  rosterEl.innerHTML = '';
+  ['gold', 'red', 'blue', 'green'].forEach((color) => {
+    const li = document.createElement('li');
+    li.className = `roster-${color}`;
+    const playerName = state.playersByColor[color] || 'Waiting for player…';
+    const ready = state.readyByColor[color] ? '✅ ready' : '⏳ not ready';
+    const turn = state.turn === color && state.started ? ' • turn' : '';
+    li.textContent = `${color.toUpperCase()}: ${playerName} (${ready}${turn})`;
+    rosterEl.append(li);
+  });
+}
+
+function updateGameStatus() {
+  if (!state.yourColor) {
+    gameStatusEl.textContent = 'Observer mode (all colors currently assigned).';
+    readyButton.disabled = true;
+    readyButton.textContent = 'Ready';
+    return;
+  }
+
+  if (!state.started) {
+    const isReady = !!state.readyByColor[state.yourColor];
+    gameStatusEl.textContent = `You are ${state.yourColor.toUpperCase()}. Click ready when you are prepared.`;
+    readyButton.disabled = false;
+    readyButton.textContent = isReady ? 'Unready' : 'Ready';
+    return;
+  }
+
+  readyButton.disabled = true;
+  readyButton.textContent = 'Ready';
+  if (state.turn === state.yourColor) {
+    gameStatusEl.textContent = `Your turn (${state.yourColor.toUpperCase()}). Select a piece then its destination.`;
+  } else {
+    gameStatusEl.textContent = `Game in progress. Waiting for ${String(state.turn || '').toUpperCase()} to move.`;
+  }
+}
+
+function renderBoard() {
+  board.innerHTML = '';
+
+  for (let row = 0; row < 14; row += 1) {
+    for (let col = 0; col < 14; col += 1) {
+      const cell = document.createElement('button');
+      cell.type = 'button';
+      cell.classList.add('cell');
+      cell.dataset.row = String(row);
+      cell.dataset.col = String(col);
+
+      if (!inBoard(row, col)) {
+        cell.classList.add('void');
+        cell.disabled = true;
+      } else {
+        cell.classList.add((row + col) % 2 ? 'dark' : 'light');
+        const piece = pieceAt(row, col);
+        if (piece) {
+          cell.textContent = pieces[piece.type];
+          cell.classList.add(`piece-${piece.color}`);
+        }
+      }
+
+      if (state.selectedCell && state.selectedCell.row === row && state.selectedCell.col === col) {
+        cell.classList.add('selected');
+      }
+
+      board.append(cell);
+    }
+  }
+}
+
+function applyGameState(payload) {
+  state.board = payload.board || {};
+  state.playersByColor = payload.playersByColor || state.playersByColor;
+  state.readyByColor = payload.readyByColor || state.readyByColor;
+  state.started = !!payload.started;
+  state.turn = payload.turn || null;
+  state.yourColor = payload.yourColor || null;
+  state.selectedCell = null;
+
+  renderBoard();
+  updateRoster();
+  updateGameStatus();
+}
+
 const ws = new WebSocket(`ws://${location.host}`);
 
 ws.addEventListener('open', () => {
@@ -114,12 +162,17 @@ ws.addEventListener('message', ({ data }) => {
   if (msg.event === 'welcome') {
     state.users = msg.payload.users;
     updateRecipientOptions();
-    pushMessage('Welcome! Set your name and start chatting.', 'system');
+    applyGameState(msg.payload.game);
+    pushMessage('Welcome! Set your name, chat, and ready up to start.', 'system');
   }
 
   if (msg.event === 'users:update') {
     state.users = msg.payload.users;
     updateRecipientOptions();
+  }
+
+  if (msg.event === 'game:update') {
+    applyGameState(msg.payload);
   }
 
   if (msg.event === 'chat') {
@@ -146,6 +199,63 @@ nameInput.addEventListener('change', () => {
   );
 });
 
+readyButton.addEventListener('click', () => {
+  if (!state.yourColor || state.started) return;
+  ws.send(
+    JSON.stringify({
+      type: 'game:ready',
+      ready: !state.readyByColor[state.yourColor],
+    })
+  );
+});
+
+board.addEventListener('click', (event) => {
+  const target = event.target.closest('.cell');
+  if (!target || !target.dataset.row) return;
+
+  const row = Number(target.dataset.row);
+  const col = Number(target.dataset.col);
+  if (!inBoard(row, col)) return;
+
+  const piece = pieceAt(row, col);
+
+  if (!state.started || !state.yourColor || state.turn !== state.yourColor) {
+    state.selectedCell = null;
+    renderBoard();
+    return;
+  }
+
+  if (!state.selectedCell) {
+    if (!piece || piece.color !== state.yourColor) return;
+    state.selectedCell = { row, col };
+    renderBoard();
+    return;
+  }
+
+  if (state.selectedCell.row === row && state.selectedCell.col === col) {
+    state.selectedCell = null;
+    renderBoard();
+    return;
+  }
+
+  if (piece && piece.color === state.yourColor) {
+    state.selectedCell = { row, col };
+    renderBoard();
+    return;
+  }
+
+  ws.send(
+    JSON.stringify({
+      type: 'game:move',
+      from: state.selectedCell,
+      to: { row, col },
+    })
+  );
+
+  state.selectedCell = null;
+  renderBoard();
+});
+
 chatForm.addEventListener('submit', (e) => {
   e.preventDefault();
   const text = chatInput.value.trim();
@@ -163,4 +273,6 @@ chatForm.addEventListener('submit', (e) => {
   chatInput.focus();
 });
 
-drawBoard();
+renderBoard();
+updateRoster();
+updateGameStatus();
