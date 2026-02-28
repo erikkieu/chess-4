@@ -26,3 +26,6 @@ Yes. The server listens on port `3000` and can be reached from other devices on 
 - Turn order rotates: gold → red → blue → green.
 - If a player disconnects during a game, the match resets and everyone must ready up again.
 - Advanced rules (check/checkmate, castling, en passant) are not implemented yet.
+## Netlify
+
+For exact Netlify settings and deployment caveats for this app, see `NETLIFY_DEPLOY.md`.
